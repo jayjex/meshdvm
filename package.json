@@ -1,0 +1,24 @@
+{
+  "name": "meshdvm",
+  "version": "1.0.0",
+  "description": "NIP-90 Data Vending Machine selling SensorMesh data for Cashu ecash on Nostr",
+  "main": "src/index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test test/smoke.test.js",
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dry": "node --env-file-if-exists=.env --input-type=module -e \"import('./src/index.js').then(m=>m.main()).then(x=>{setTimeout(()=>{x.listener.pool.close([]);x.httpServer.close();process.exit(0)},8000)})\""
+  },
+  "keywords": [],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cashu/cashu-ts": "^4.10.1",
+    "nostr-tools": "^2.25.2"
+  }
+}
