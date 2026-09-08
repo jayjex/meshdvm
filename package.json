@@ -8,7 +8,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node --test test/smoke.test.js",
+    "test": "node --test \"test/*.test.js\"",
     "start": "node --env-file-if-exists=.env src/index.js",
     "dry": "node --env-file-if-exists=.env --input-type=module -e \"import('./src/index.js').then(m=>m.main()).then(x=>{setTimeout(()=>{x.listener.pool.close([]);x.httpServer.close();process.exit(0)},8000)})\""
   },
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@cashu/cashu-ts": "^4.10.1",
+    "better-sqlite3": "^13.0.3",
     "nostr-tools": "^2.25.2"
   }
 }
