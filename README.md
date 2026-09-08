@@ -12,13 +12,13 @@ Built for the Bitshala BOSS Battle hackathon, Freedom Stack track (Nostr + ecash
 4. The bot verifies the proofs against the mint (NUT-07 checkstate, rejects spent tokens and foreign mints), swaps them into its own keyset, then publishes the result (kind `6050`) with the data as JSON content and a `request` tag echoing the job.
 5. Every result pins the dataset SHA-256, so buyers can verify the bytes they got against the published file.
 
-Overpayment is reported in the result payload; automatic change refunds land in sprint 2.
+Overpayment comes back to the buyer as a fresh Cashu token: the result payload carries `payment.change_token` (overpayments below 2 sat stay as a tip — keyset fees make smaller tokens unredeemable). Job history, payments, refunds, and processed event ids persist in a local SQLite ledger, so a restart neither re-redeems a replayed token nor loses the books.
 
 ## Quick start
 
 ```sh
 npm install
-npm test          # 11 smoke tests, no network
+npm test          # 21 tests (smoke + hardening), no network
 npm start         # bot on nos.lol / relay.primal.net / offchain.pub + HTTP :8795
 ```
 
@@ -31,6 +31,7 @@ Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
 | `MESH_RELAYS` | `wss://nos.lol,wss://relay.primal.net,wss://offchain.pub` | Comma-separated relay list |
 | `MESH_PRICE_SATS` | `2` | Price per query call in sats (mint swap fee is 1 sat, so 2 is the smallest redeemable payment) |
 | `MESH_HTTP_PORT` | `8795` | Port for the sample endpoint |
+| `MESH_DB` | `data/meshdvm.sqlite3` | SQLite ledger file (jobs, payments, refunds, seen event ids) |
 
 ## Free sample
 
@@ -38,7 +39,7 @@ Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
 
 ## Status
 
-Working: request parsing, feedback, token verify + redeem, filtered queries with sha256 pinning, free sample endpoint, 3-relay subscription.
+Working: request parsing, feedback, token verify + redeem, overpayment change refunds, SQLite ledger (restart-safe, event dedup), filtered queries with sha256 pinning, free sample endpoint, 3-relay subscription.
 
 The DVM npub for week 1: `npub1sqc84t7fgh86557yv4djnhvg7037zlvnnxfluhydgmu89qa756gqg3m3w0` (key lives in a local `.env`, never committed).
 
@@ -51,7 +52,7 @@ node examples/client.js --no-pay  # unpaid request, expect payment_required feed
 
 Set `MESH_DVM_PUBKEY` in your env to the DVM hex pubkey so the client ignores result events from other DVMs on the same relays (several free DVMs answer any kind 5050 they see).
 
-Not yet (sprint 2+): change refunds for overpayment, sqlite state across restarts, P2PK-locked tokens, multi-mint.
+Not yet (sprint 3+): P2PK-locked tokens, multi-mint, wallet balance rehydration after restart.
 
 ## License
 
