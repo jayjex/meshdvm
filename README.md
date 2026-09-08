@@ -18,7 +18,7 @@ Overpayment comes back to the buyer as a fresh Cashu token: the result payload c
 
 ```sh
 npm install
-npm test          # 21 tests (smoke + hardening), no network
+npm test          # 22 tests (smoke + hardening), no network
 npm start         # bot on nos.lol / relay.primal.net / offchain.pub + HTTP :8795
 ```
 

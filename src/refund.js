@@ -37,7 +37,7 @@ export async function buildRefundToken(wallet, amountSats, walletProofs = null) 
     return { ok: false, reason: `wallet send failed: ${e.message}` };
   }
   if (!send || !send.length) return { ok: false, reason: "wallet send returned no proofs" };
-  const total = send.reduce((a, p) => a + (p.amount || 0), 0);
+  const total = send.reduce((a, p) => a + Number(p.amount || 0), 0);
   if (total < amountSats) return { ok: false, reason: `wallet send short: ${total} < ${amountSats}` };
   const token = getEncodedToken({ mint: wallet.mint?.mintUrl, unit: "sat", proofs: send });
   return { ok: true, amountSats: total, token, keep: keep };

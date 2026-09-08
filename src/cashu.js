@@ -81,7 +81,8 @@ export class CashuEscrow {
       if (s.state && s.state !== "UNSPENT") return { ok: false, reason: `proof ${s.Y || s.secret} is ${s.state}` };
     }
     const rawAmount = meta.amount?.value ?? meta.amount; // v4 Amount wraps a bigint
-    return { ok: true, amountSats: rawAmount != null ? Number(rawAmount) : proofs.reduce((a, p) => a + (p.amount || 0), 0), proofs };
+    // proof.amount is a STRING in cashu-ts v4 — Number() or it concats ("4"+"1"="41")
+    return { ok: true, amountSats: rawAmount != null ? Number(rawAmount) : proofs.reduce((a, p) => a + Number(p.amount || 0), 0), proofs };
   }
 
   /** Redeem (swap) a verified token into the bot's wallet proofs. */
@@ -90,7 +91,7 @@ export class CashuEscrow {
       const wallet = await this.ensureWallet();
       const proofs = await wallet.receive(token);
       this.balance.push(...proofs);
-      return { ok: true, amountSats: proofs.reduce((a, p) => a + (p.amount || 0), 0), proofs };
+      return { ok: true, amountSats: proofs.reduce((a, p) => a + Number(p.amount || 0), 0), proofs };
     } catch (e) {
       return { ok: false, reason: `redeem failed: ${e.message}` };
     }

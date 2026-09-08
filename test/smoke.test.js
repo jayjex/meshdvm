@@ -173,6 +173,13 @@ test("escrow redeem totals proofs", async () => {
   assert.equal(r.amountSats, 3);
 });
 
+test("escrow: cashu-ts v4 string proof amounts sum numerically, never concat", async () => {
+  const stringWallet = { async receive() { return [{ amount: "4", secret: "s1", C: "02" }, { amount: "1", secret: "s2", C: "02" }]; } };
+  const escrow = new CashuEscrow({ mint: fakeMint(), wallet: stringWallet, mintUrl: "https://testnut.cashu.space" });
+  const r = await escrow.redeemToken("cashuAnything");
+  assert.equal(r.amountSats, 5, "\"4\" + \"1\" must be 5, not \"41\"");
+});
+
 // ---------------------------------------------------------------- full job flow on a fake relay
 function fakePublisher() {
   const published = [];
