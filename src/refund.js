@@ -20,14 +20,19 @@ export function calcChange(totalSats, priceSats) {
 }
 
 /** Build a change token from the bot's wallet balance.
- *  wallet: object with send(amount) -> { keep, send } (cashu-ts Wallet shape).
+ *  wallet: object with send(amount, proofs?, opts?) -> { keep, send } (cashu-ts Wallet shape).
+ *  walletProofs: the proofs to split from (cashu-ts v4 requires them explicitly).
  *  Returns { ok, amountSats, token } or { ok: false, reason }. */
-export async function buildRefundToken(wallet, amountSats) {
+export async function buildRefundToken(wallet, amountSats, walletProofs = null) {
   if (!Number.isInteger(amountSats) || amountSats < MIN_CHANGE_SATS)
     return { ok: false, reason: `overpayment ${amountSats} sat below change threshold ${MIN_CHANGE_SATS} sat` };
-  let send;
+  let send, keep;
   try {
-    ({ send } = await wallet.send(amountSats));
+    // cashu-ts v4 Wallet.send(amount, proofs?, opts?): omitting the proofs makes
+    // the swap leave the keep-side proofs unsigned ("Token Already Spent" for the
+    // next spend), and omitting includeFees leaves them under-funded for the
+    // 1 sat/proof keyset fee. Both flags are mandatory on testnut.
+    ({ send, keep } = await wallet.send(amountSats, walletProofs ?? undefined, { includeFees: true }));
   } catch (e) {
     return { ok: false, reason: `wallet send failed: ${e.message}` };
   }
@@ -35,5 +40,5 @@ export async function buildRefundToken(wallet, amountSats) {
   const total = send.reduce((a, p) => a + (p.amount || 0), 0);
   if (total < amountSats) return { ok: false, reason: `wallet send short: ${total} < ${amountSats}` };
   const token = getEncodedToken({ mint: wallet.mint?.mintUrl, unit: "sat", proofs: send });
-  return { ok: true, amountSats: total, token };
+  return { ok: true, amountSats: total, token, keep: keep };
 }

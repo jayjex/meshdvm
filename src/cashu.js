@@ -15,6 +15,7 @@ export class CashuEscrow {
     this.wallet = wallet;
     this.mintUrl = mintUrl;
     this._walletReady = null;
+    this.balance = []; // spendable proofs owned by the bot (cashu-ts Wallet does not track them for us)
   }
 
   /** Wire up the real testnet mint from cashu-ts. */
@@ -35,6 +36,7 @@ export class CashuEscrow {
       const w = new Wallet(this.mint);
       await w.loadMint();
       this._walletReady = w;
+      this.wallet = w; // keep the public field in sync — refund path reads escrow.wallet
     }
     return this._walletReady;
   }
@@ -87,6 +89,7 @@ export class CashuEscrow {
     try {
       const wallet = await this.ensureWallet();
       const proofs = await wallet.receive(token);
+      this.balance.push(...proofs);
       return { ok: true, amountSats: proofs.reduce((a, p) => a + (p.amount || 0), 0), proofs };
     } catch (e) {
       return { ok: false, reason: `redeem failed: ${e.message}` };

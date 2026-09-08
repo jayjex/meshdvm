@@ -96,15 +96,16 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
     // than it is worth, so it is reported as a tip instead.
     let refund = { sent: false, sats: overpaySats, note: overpaySats > 0 ? `below ${MIN_CHANGE_SATS} sat change threshold, kept as tip` : null };
     if (overpaySats >= MIN_CHANGE_SATS) {
-      const c = await buildRefundToken(escrow.wallet, overpaySats);
+      const c = await buildRefundToken(escrow.wallet, overpaySats, escrow.balance);
       if (c.ok) {
         refund = { sent: true, sats: c.amountSats, token: c.token };
+        if (c.keep) escrow.balance = c.keep; // spent proofs out, keep-side swap proofs in
         log(`[job] ${req.requestId.slice(0, 8)} refund ${c.amountSats} sat prepared`);
       } else {
         refund = { sent: false, sats: overpaySats, note: `change send failed: ${c.reason}` };
         log(`[job] ${req.requestId.slice(0, 8)} refund failed: ${c.reason}`);
       }
-      ledger?.recordRefund({ requestId: req.requestId, amountSats: overpaySats, token: refund.token || null, state: refund.sent ? "sent" : refund.sent === false && refund.note?.startsWith("change send failed") ? "failed" : "kept" });
+      ledger?.recordRefund({ requestId: req.requestId, amountSats: refund.sent ? c.amountSats : overpaySats, token: refund.token || null, state: refund.sent ? "sent" : refund.sent === false && refund.note?.startsWith("change send failed") ? "failed" : "kept" });
     }
 
     const payload = await buildDataPayload(query, req.params);
@@ -126,7 +127,7 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
   };
 }
 
-export function startNostrListener({ escrow, privkey, relays = RELAYS, log = console.log }) {
+export function startNostrListener({ escrow, ledger = null, privkey, relays = RELAYS, log = console.log }) {
   // enableReconnect: relay sockets idle out after 20s by default; without
   // reconnect the bot goes deaf on quiet relays and misses jobs.
   const pool = new SimplePool({ enableReconnect: true });

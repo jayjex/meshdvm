@@ -43,7 +43,7 @@ Requests 5050, results 6050, feedback 7000. NIP-90 defines requests in 5000-5999
 
 testnut.cashu.space is a public testnet mint (FakeWallet: invoices auto-confirm), so the full mint → token → verify → swap loop runs without real sats. The bot treats the mint as the only trusted third party: proofs are checked for spend state at the mint and swapped on accept, meaning a replayed token fails checkstate.
 
-Overpaid tokens are not eaten. The handler computes `total - price`, and when the change clears the 2 sat fee floor it splits that amount off the bot's own balance (`Wallet.send`) and attaches the resulting token to the result payload as `payment.change_token`. NUT-03 change outputs were the alternative; they need melt/swap plumbing the testnut FakeWallet does not exercise, so the token-in-result path wins. A failed split still ships the result and records the refund row as `failed`.
+Overpaid tokens are not eaten. The handler computes `total - price`, and when the change clears the 2 sat fee floor it splits that amount off the bot's own balance (`Wallet.send` with the bot's proof list and `includeFees: true` — omitting either makes cashu-ts v4 leave unsigned or under-funded proofs behind) and attaches the resulting token to the result payload as `payment.change_token`. The token total includes the 1 sat keyset fee, so the buyer nets exactly the overpayment. NUT-03 change outputs were the alternative; they need melt/swap plumbing the testnut FakeWallet does not exercise, so the token-in-result path wins. A failed split still ships the result and records the refund row as `failed`.
 
 ## Hardening (week 2)
 

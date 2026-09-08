@@ -40,15 +40,24 @@ function fakeMint() {
   };
 }
 
-/** Wallet stub: receive hands back fixed proofs, send splits `n` off them. */
+/** Wallet stub: receive hands back fixed proofs, send splits n off a given
+ *  proof list and returns keep/send — mirrors the cashu-ts v4 contract
+ *  (send(amount, proofs, { includeFees })). */
 function fakeWallet(receiveProofs) {
   return {
     mint: { mintUrl: MINT },
     async receive() { return receiveProofs; },
-    async send(n) {
-      const send = receiveProofs.filter((p) => p.amount <= n).slice(0, 1).map((p) => ({ ...p }));
-      if (!send.length || send[0].amount !== n) throw new Error(`cannot split ${n} from ${JSON.stringify(receiveProofs)}`);
-      return { keep: receiveProofs.filter((p) => p !== send[0]), send };
+    async send(n, proofs, opts) {
+      const pool = proofs || receiveProofs;
+      if (opts?.includeFees && n === MIN_CHANGE_SATS && pool.length === 1 && pool[0].amount === MIN_CHANGE_SATS + 1) {
+        // fee-aware: a 3 sat send from one 3 sat proof pays 1 sat fee
+        const send = [{ ...pool[0], amount: n }];
+        const keep = [{ amount: pool[0].amount - n - 1, secret: "feekeep", C: "02", id: pool[0].id }];
+        return { keep, send };
+      }
+      const send = pool.filter((p) => p.amount === n).slice(0, 1).map((p) => ({ ...p }));
+      if (!send.length) throw new Error(`cannot split ${n} from ${JSON.stringify(pool.map((p) => p.amount))}`);
+      return { keep: pool.filter((p) => p !== send[0]), send };
     },
   };
 }
@@ -69,15 +78,16 @@ test("buildRefundToken: refuses to split below the fee threshold", async () => {
   assert.equal(zero.ok, false);
 });
 
-test("buildRefundToken: splits proofs into a decodable change token", async () => {
+test("buildRefundToken: splits proofs into a decodable change token, returns keep side", async () => {
   const { getTokenMetadata } = await import("@cashu/cashu-ts");
   const wallet = fakeWallet([{ amount: 3, secret: "0a0b", C: "0204", id: "0100aabbccddeeff00112233" }]);
-  const r = await buildRefundToken(wallet, 3);
+  const r = await buildRefundToken(wallet, 3, [{ amount: 3, secret: "0a0b", C: "0204", id: "0100aabbccddeeff00112233" }]);
   assert.equal(r.ok, true);
   assert.equal(r.amountSats, 3);
   const meta = getTokenMetadata(r.token);
   assert.equal(meta.amount.value, 3n);
   assert.ok(r.token.startsWith("cashu"));
+  assert.ok(Array.isArray(r.keep) && r.keep.length === 1, "keep side returned for balance tracking");
 });
 
 test("buildRefundToken: wallet send failure comes back as a reason, not a throw", async () => {

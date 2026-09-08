@@ -9,7 +9,7 @@ const RELAYS = (process.env.MESH_RELAYS || "wss://nos.lol,wss://relay.primal.net
   .split(",")
   .map((s) => s.trim());
 const MINT_URL = process.env.MESH_MINT_URL || "https://testnut.cashu.space";
-const PRICE_SATS = Number(process.env.MESH_PRICE_SATS || 2); // must cover the mint's 1-sat swap fee
+const PRICE_SATS = Number(process.env.CLIENT_MINT_SATS || 2); // must cover the mint's 1-sat swap fee; mint more to see the change refund
 const KIND_REQUEST = 5050;
 const TIMEOUT_MS = Number(process.env.CLIENT_TIMEOUT_MS || 45000);
 const PAY = !process.argv.includes("--no-pay");
