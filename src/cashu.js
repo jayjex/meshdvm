@@ -96,6 +96,38 @@ export class CashuEscrow {
       return { ok: false, reason: `redeem failed: ${e.message}` };
     }
   }
+
+  /** Rebuild the spendable balance after a restart. The ledger only stores
+   *  candidate proofs (redeemed inputs + refund keep sides); which of those
+   *  are actually unspent is decided by the mint. A proof swapped away in an
+   *  earlier refund is SPENT at the mint and drops out here. If the mint is
+   *  unreachable the balance stays empty — refunds then fail cleanly with
+   *  "send failed" instead of replaying proofs of unknown state. */
+  async restoreBalance(proofs) {
+    const candidates = (proofs || []).filter((p) => p && p.secret && p.C);
+    if (!candidates.length) {
+      this.balance = [];
+      return { ok: true, restored: 0, dropped: 0, sats: 0 };
+    }
+    const enc = new TextEncoder();
+    const Ys = candidates.map((p) => hashToCurve(enc.encode(String(p.secret))).toHex());
+    let states;
+    try {
+      states = await this.mint.check({ Ys });
+    } catch (e) {
+      this.balance = [];
+      return { ok: false, restored: 0, dropped: candidates.length, sats: 0, reason: `mint checkstate failed: ${e.message}` };
+    }
+    const spent = new Set((states.states || []).filter((s) => s.state && s.state !== "UNSPENT").map((s) => s.Y));
+    const Yof = (p) => hashToCurve(enc.encode(String(p.secret))).toHex();
+    this.balance = candidates.filter((p) => !spent.has(Yof(p)));
+    return {
+      ok: true,
+      restored: this.balance.length,
+      dropped: candidates.length - this.balance.length,
+      sats: this.balance.reduce((a, p) => a + Number(p.amount || 0), 0),
+    };
+  }
 }
 
 function sameMint(a, b) {

@@ -22,6 +22,23 @@ const HTTP_PORT = Number(process.env.MESH_HTTP_PORT || 8795);
 // ---------------------------------------------------------------- nostr side
 export function makeJobHandler({ escrow, ledger = null, privkey, log = console.log }) {
   const botPubkey = getPublicKey(privkey);
+  // Rebuild the spendable balance from the ledger once, on the first fresh
+  // job. The dedup mark above runs first and synchronously, so a relay replay
+  // or a second relay copy can never reach the redeem path; rehydration only
+  // happens for events that got past it.
+  let rehydrated = false;
+  const rehydrateOnce = async () => {
+    if (rehydrated || !ledger) return;
+    rehydrated = true;
+    try {
+      const r = await escrow.restoreBalance(ledger.spendableProofs());
+      if (r.restored || r.dropped)
+        log(`[wallet] balance restored from ledger: ${r.restored} proofs / ${r.sats} sat (${r.dropped} spent dropped)`);
+      else log("[wallet] no spendable proofs in ledger, starting with empty balance");
+    } catch (e) {
+      log(`[wallet] balance restore failed: ${e.message}`);
+    }
+  };
   return async function handleJobEvent(ev, publish) {
     const t0 = Date.now();
     // Dedup on the raw event id, marked before any processing: relays replay
@@ -31,6 +48,7 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
       log(`[job] ${ev.id?.slice(0, 8)} duplicate, skipped`);
       return;
     }
+    await rehydrateOnce();
     const req = parseRequestEvent(ev);
     if (!req.ok) {
       log(`[job] ${ev.id?.slice(0, 8)} rejected: ${req.error}`);
@@ -105,7 +123,7 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
         refund = { sent: false, sats: overpaySats, note: `change send failed: ${c.reason}` };
         log(`[job] ${req.requestId.slice(0, 8)} refund failed: ${c.reason}`);
       }
-      ledger?.recordRefund({ requestId: req.requestId, amountSats: refund.sent ? c.amountSats : overpaySats, token: refund.token || null, state: refund.sent ? "sent" : refund.sent === false && refund.note?.startsWith("change send failed") ? "failed" : "kept" });
+      ledger?.recordRefund({ requestId: req.requestId, amountSats: refund.sent ? c.amountSats : overpaySats, token: refund.token || null, state: refund.sent ? "sent" : refund.sent === false && refund.note?.startsWith("change send failed") ? "failed" : "kept", keepProofs: refund.sent ? (c.keep || []) : null });
     }
 
     const payload = await buildDataPayload(query, req.params);

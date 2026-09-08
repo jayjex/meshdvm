@@ -41,6 +41,7 @@ export class Ledger {
         amount_sats INTEGER NOT NULL,
         token TEXT,
         state TEXT NOT NULL,
+        keep_json TEXT,
         created_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS seen_events (
@@ -48,6 +49,11 @@ export class Ledger {
         seen_at INTEGER NOT NULL
       );
     `);
+    // older ledgers predate the keep-side column (added for balance rehydration);
+    // it must exist before the statements below are prepared
+    try {
+      this.db.exec("ALTER TABLE refunds ADD COLUMN keep_json TEXT");
+    } catch { /* column already exists */ }
     this._stmts = {
       seen: this.db.prepare("SELECT event_id FROM seen_events WHERE event_id = ?"),
       mark: this.db.prepare("INSERT OR IGNORE INTO seen_events (event_id, seen_at) VALUES (?, ?)"),
@@ -59,7 +65,12 @@ export class Ledger {
         "INSERT OR REPLACE INTO payments (request_id, token_hash, amount_sats, overpayment_sats, proofs_json, redeemed_at) VALUES (?, ?, ?, ?, ?, ?)"
       ),
       refund: this.db.prepare(
-        "INSERT OR REPLACE INTO refunds (request_id, amount_sats, token, state, created_at) VALUES (?, ?, ?, ?, ?)"
+        "INSERT OR REPLACE INTO refunds (request_id, amount_sats, token, state, keep_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ),
+      spendable: this.db.prepare(
+        `SELECT proofs_json FROM payments
+         UNION ALL
+         SELECT keep_json FROM refunds WHERE state = 'sent' AND keep_json IS NOT NULL`
       ),
       stats: {
         jobs: this.db.prepare("SELECT COUNT(*) AS n FROM jobs"),
@@ -93,8 +104,31 @@ export class Ledger {
     this._stmts.payment.run(requestId, hashToken(token), amountSats, overpaymentSats, JSON.stringify(proofs || []), Date.now());
   }
 
-  recordRefund({ requestId, amountSats, token = null, state }) {
-    this._stmts.refund.run(requestId, amountSats, token, state, Date.now());
+  /** Record a refund. keepProofs are the swap outputs that stayed in the bot's
+   *  wallet — without them a restart would forget that side of the balance. */
+  recordRefund({ requestId, amountSats, token = null, state, keepProofs = null }) {
+    this._stmts.refund.run(requestId, amountSats, token, state, JSON.stringify(keepProofs || []), Date.now());
+  }
+
+  /** Every proof the ledger believes the bot may still own: redeemed payment
+   *  proofs plus the keep side of sent refunds. Spent ones are filtered out
+   *  later against the mint (NUT-07 checkstate) — this list is only a
+   *  candidate set, so a stale row can inflate nothing. */
+  spendableProofs() {
+    const bySecret = new Map();
+    for (const row of this._stmts.spendable.all()) {
+      if (!row.proofs_json) continue;
+      let proofs;
+      try {
+        proofs = JSON.parse(row.proofs_json);
+      } catch {
+        continue; // a corrupt row must not crash the boot
+      }
+      for (const p of Array.isArray(proofs) ? proofs : []) {
+        if (p && p.secret && p.amount != null && p.C) bySecret.set(String(p.secret), p);
+      }
+    }
+    return [...bySecret.values()];
   }
 
   stats() {
