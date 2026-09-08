@@ -2,23 +2,57 @@
 
 A Nostr Data Vending Machine (NIP-90) that sells [SensorMesh](https://github.com/jayjex) IoT sensor data and takes Cashu ecash. No accounts on either side: the buyer is an npub, the payment is a token string pasted into a Nostr event.
 
-Built for the Bitshala BOSS Battle hackathon, Freedom Stack track (Nostr + ecash). Sprint 1 = week-1 core: the request/response loop works end to end on public relays with testnet ecash.
+Built for the Bitshala BOSS Battle hackathon, Freedom Stack track (Nostr + ecash).
 
 ## How it works
 
-1. A buyer publishes a NIP-90 job request (kind `5050`) with query params in `param` tags or JSON content: `site`, `sensor`, `device`, `since`, `until`, `anomaly`, `limit`, `offset`, `stats`. A `bid` tag carries the budget in msat.
-2. The bot replies with kind `7000` job feedback. First status is `payment_required`, with the price and mint in the `amount` tag.
-3. The buyer mints a Cashu token at the configured mint (default `https://testnut.cashu.space`, testnet) and resends the request with the token in content `{"cashu":"cashu..."}` or a `cashu` tag.
-4. The bot verifies the proofs against the mint (NUT-07 checkstate, rejects spent tokens and foreign mints), swaps them into its own keyset, then publishes the result (kind `6050`) with the data as JSON content and a `request` tag echoing the job.
-5. Every result pins the dataset SHA-256, so buyers can verify the bytes they got against the published file.
+1. **Request.** The buyer publishes a NIP-90 job request (kind `5050`) with query params in `param` tags (`site`, `sensor`, `device`, `since`, `until`, `anomaly`, `limit`, `offset`, `stats`) and a `bid` budget in msat.
+2. **Escrow.** The bot replies with kind `7000` feedback. Unpaid jobs get `payment_required` with the price and mint; paid jobs get `processing` while the attached Cashu token is checked against the mint (NUT-07 checkstate) and swapped into the bot's keyset. Spent tokens and foreign mints are rejected before any data moves.
+3. **Query.** A paid job runs through the vendored SensorMesh engine: filter by site/sensor/device/time/anomaly, paginate, and pin the answer to the dataset SHA-256.
+4. **Result.** The bot publishes kind `6050` with the rows as JSON content and a `request` tag echoing the job id.
+5. **Refund.** Overpayment goes back to the buyer as a fresh Cashu token in the result payload (`payment.change_token`). Below 2 sat the change stays a tip: the keyset fee makes smaller tokens unredeemable. Every job, payment, refund, and processed event id is written to a SQLite ledger, so a restart re-restores the wallet balance and replays can't re-redeem a token.
 
-Overpayment comes back to the buyer as a fresh Cashu token: the result payload carries `payment.change_token` (overpayments below 2 sat stay as a tip — keyset fees make smaller tokens unredeemable). Job history, payments, refunds, and processed event ids persist in a local SQLite ledger, so a restart neither re-redeems a replayed token nor loses the books.
+Ask for a quote without paying, with noscl-style publishing (any NIP-90 client works):
+
+```sh
+noscl event -k 5050 --tag param=site:metro-core --tag param=limit:5 --tag bid=2000
+# -> kind 7000 feedback: status=payment_required, price 2 sat at https://testnut.cashu.space
+```
+
+Mint a token at the testnet mint, then resend the job with it in a `cashu` tag (or content `{"cashu":"cashu..."}`):
+
+```sh
+noscl event -k 5050 --tag param=site:metro-core --tag param=limit:5 --tag bid=5000 \
+  --tag cashu=cashuBo2FteBt...
+# -> kind 7000 processing -> kind 6050 result (data JSON + payment.change_token when overpaid)
+```
+
+Or run the bundled client, which mints, publishes, waits, and prints the result:
+
+```sh
+node examples/client.js           # mint 5 sat testnet, buy one query, print the change token
+node examples/client.js --no-pay  # unpaid request, expect payment_required feedback
+```
+
+One job end to end on public relays: the client (left) mints 5 sat, publishes kind 5050, and receives the kind 6050 result; the bot (right) restores its wallet from the ledger at boot, redeems, and refunds the change.
+
+![A paid job end to end on public relays](docs/img/bot-relay.png)
+
+## Refunds and restart safety
+
+Pay 5 sat for a 2 sat query and the result carries this block:
+
+![Overpayment refunded as a fresh cashu token](docs/img/refund-token.png)
+
+The token in `payment.change_token` is a normal Cashu token: paste it into any Cashu wallet to redeem the 2 sat. The refund split comes off the bot's own balance, and the keep side of every swap is written to the ledger, so after a crash or restart the bot rebuilds exactly what it still owns (spent proofs are dropped by asking the mint).
+
+![GET /health with ledger totals restored from sqlite](docs/img/health-json.png)
 
 ## Quick start
 
 ```sh
 npm install
-npm test          # 22 tests (smoke + hardening), no network
+npm test          # 29 tests (smoke + hardening + rehydration), no network
 npm start         # bot on nos.lol / relay.primal.net / offchain.pub + HTTP :8795
 ```
 
@@ -35,24 +69,23 @@ Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
 
 ## Free sample
 
-`GET /v1/sensormesh/sample?limit=20` returns the first page of rows plus the dataset hash. `GET /health` shows relay list, mint, and price.
+`GET /v1/sensormesh/sample?limit=20` returns the first page of rows plus the dataset hash. `GET /health` shows relay list, mint, price, and ledger totals (jobs, sats earned, sats refunded).
 
 ## Status
 
-Working: request parsing, feedback, token verify + redeem, overpayment change refunds, SQLite ledger (restart-safe, event dedup), filtered queries with sha256 pinning, free sample endpoint, 3-relay subscription.
+Working: request parsing, feedback, token verify + redeem, overpayment change refunds, wallet balance rehydration after restart, SQLite ledger (restart-safe, event dedup), filtered queries with sha256 pinning, free sample endpoint, 3-relay subscription.
 
-The DVM npub for week 1: `npub1sqc84t7fgh86557yv4djnhvg7037zlvnnxfluhydgmu89qa756gqg3m3w0` (key lives in a local `.env`, never committed).
+The DVM npub: `npub1sqc84t7fgh86557yv4djnhvg7037zlvnnxfluhydgmu89qa756gqg3m3w0` (key lives in a local `.env`, never committed).
 
 Try it yourself while the bot is running:
 
 ```sh
-node examples/client.js           # mint 2 sat testnet, buy one query, print the result
-node examples/client.js --no-pay  # unpaid request, expect payment_required feedback
+MESH_DVM_PUBKEY=<bot hex pubkey> node examples/client.js
 ```
 
 Set `MESH_DVM_PUBKEY` in your env to the DVM hex pubkey so the client ignores result events from other DVMs on the same relays (several free DVMs answer any kind 5050 they see).
 
-Not yet (sprint 3+): P2PK-locked tokens, multi-mint, wallet balance rehydration after restart.
+Not yet (sprint 4+): P2PK-locked tokens, multi-mint.
 
 ## License
 

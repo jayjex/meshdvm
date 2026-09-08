@@ -53,7 +53,14 @@ Three failure modes from week 1 are closed:
 - **State loss on restart.** `Ledger` (better-sqlite3) writes job rows at `received`, updates status through the flow (`paid`, `error_*`, `payment_required_*`), and stores the token hash plus proof count per payment. Reopening the same file at boot restores the books; the boot log prints the restored totals.
 - **Lost change.** Refund attempts are recorded in `refunds` with a state (`sent` / `kept` / `failed`) at the moment they happen, so the ledger always answers whether change for a given job went out.
 
-Token proofs themselves still live in the bot's seed balance; rehydrating proof state from the ledger after a crash between redeem and persist is the remaining gap (sprint 3).
+Token proofs themselves live in the bot's seed balance. After a restart the
+spendable balance is rebuilt from the ledger: `Ledger.spendableProofs()` collects
+the redeemed payment proofs plus the keep side of every sent refund (stored in
+`refunds.keep_json`), and `CashuEscrow.restoreBalance()` asks the mint which of
+those candidates are still unspent (NUT-07 checkstate) before loading them.
+Proofs swapped away in earlier refunds come back SPENT and drop out; if the mint
+is unreachable the bot starts with an empty balance rather than replaying proofs
+of unknown state.
 
 ## Data
 

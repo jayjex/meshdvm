@@ -77,6 +77,7 @@ const sub = pool.subscribeMany(
         console.log(`[result] kind ${ev.kind} id ${ev.id}`);
         const payload = JSON.parse(ev.content);
         console.log(JSON.stringify(payload, null, 2).slice(0, 2200));
+        if (payload.payment) console.log(`[payment] ${JSON.stringify(payload.payment, null, 2)}`);
         console.log("[client] done");
         pool.close(RELAYS);
         process.exit(0);
