@@ -1,11 +1,11 @@
 // Demo client: buy one SensorMesh query over NIP-90 with Cashu.
 // Mints a token at the testnet mint, publishes the kind 5050 job, waits for
 // feedback (7000) and the result (6050), prints the payload.
-// Usage: node examples/client.js [--no-pay]
+// Usage: node examples/client.js [--no-pay] [--p2pk <dvm-hex-pubkey>]
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { Mint, Wallet, getEncodedToken } from "@cashu/cashu-ts";
 
-const RELAYS = (process.env.MESH_RELAYS || "wss://nos.lol,wss://relay.primal.net,wss://offchain.pub")
+const RELAYS = (process.env.MESH_RELAYS || "wss://nos.lol,wss://relay.primal.net,wss://offchain.pub,wss://nostr.wine,wss://relay.snort.social")
   .split(",")
   .map((s) => s.trim());
 const MINT_URL = process.env.MESH_MINT_URL || "https://testnut.cashu.space";
@@ -17,6 +17,12 @@ const PAY = !process.argv.includes("--no-pay");
 const sk = generateSecretKey();
 const pk = getPublicKey(sk);
 console.log(`[client] ${nip19.npubEncode(pk)}`);
+
+// --p2pk: lock the payment to the DVM's hex pubkey (NUT-11) so only the DVM
+// keypair can redeem it — an interceptor who grabs the event gets nothing.
+const P2PK_ARG = process.argv.indexOf("--p2pk");
+const P2PK_PUBKEY = P2PK_ARG !== -1 ? process.argv[P2PK_ARG + 1] : null;
+const BOT_PUBKEY = process.env.MESH_DVM_PUBKEY || P2PK_PUBKEY;
 
 let token = null;
 if (PAY) {
@@ -33,7 +39,10 @@ if (PAY) {
     if (String(state.state) === "PAID" || state.state === 2) break;
   }
   if (String(state?.state) !== "PAID" && state?.state !== 2) throw new Error(`mint quote never settled (state ${state?.state})`);
-  const proofs = await wallet.mintProofsBolt11(PRICE_SATS, quote);
+  const outputType = P2PK_PUBKEY
+    ? { type: "p2pk", options: { pubkey: P2PK_PUBKEY } } // NUT-11: proofs only spendable by the DVM keypair
+    : undefined;
+  const proofs = await wallet.mintProofsBolt11(PRICE_SATS, quote, undefined, outputType);
   token = getEncodedToken({ mint: MINT_URL, unit: "sat", proofs });
   console.log(`[client] token ready (${token.length} chars)`);
 } else {
@@ -68,7 +77,6 @@ const sub = pool.subscribeMany(
       seen.add(key);
       const refsOurJob = (ev.tags || []).some((t) => t[0] === "e" && t[1] === REQUEST_ID);
       if (!refsOurJob) return; // relay fuzz: other DVMs answer kind 5050 jobs they see
-      const BOT_PUBKEY = process.env.MESH_DVM_PUBKEY;
       if (ev.kind === 6050 && BOT_PUBKEY && ev.pubkey !== BOT_PUBKEY) return; // result must come from the DVM we paid
       if (ev.kind === 7000) {
         const status = ev.tags.find((t) => t[0] === "status")?.[1];

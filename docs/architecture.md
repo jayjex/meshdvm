@@ -13,8 +13,8 @@ One Node process, three layers. Data flows Nostr → escrow → query engine →
                  │  no token                      → kind 7000 "payment_required" (+ quote)
                  ▼
                  cashu.CashuEscrow
-                 │  verifyToken: decode, mint match, NUT-07 checkstate
-                 │  redeemToken:  wallet.receive (swap into bot keyset)
+                 │  verifyToken: decode, mint match, NUT-11 lock check, NUT-07 checkstate
+                 │  redeemToken:  wallet.receive (swap into bot keyset, witness-signed if locked)
                  ▼
                  query.queryReadings / getStats   (vendored SensorMesh engine)
                  │  filters, pagination, sha256 pin
@@ -28,7 +28,7 @@ One Node process, three layers. Data flows Nostr → escrow → query engine →
 ## Modules
 
 - `src/nip90.js` — protocol only, pure functions: parse kind 5050 requests (`param` tags, JSON content override, `bid` budget, `relays` hint, embedded token), build kind 6050 results and kind 7000 feedback. Unit-tested with no I/O.
-- `src/cashu.js` — escrow seam. `CashuEscrow` wraps a cashu-ts `Mint` + `Wallet`; both are injectable, so tests run against fakes. Quote (NUT-04), token verify (NUT-07 checkstate, mint allow-list, spent rejection), redeem (swap into the bot's proofs). Price is flat per call.
+- `src/cashu.js` — escrow seam. `CashuEscrow` wraps a cashu-ts `Mint` + `Wallet`; both are injectable, so tests run against fakes. Quote (NUT-04), token verify (NUT-07 checkstate, mint allow-list, spent rejection, NUT-11 lock check), redeem (swap into the bot's proofs, witness-signed when the token is P2PK-locked). Price is flat per call.
 - `src/ledger.js` — SQLite job ledger on better-sqlite3: jobs, payments, refunds, and every processed event id. One file (`data/meshdvm.sqlite3`, override with `MESH_DB`), WAL mode, synchronous queries. Its stats feed `/health` and the boot log.
 - `src/refund.js` — overpayment change. `calcChange` clamps at zero; `buildRefundToken` splits proofs off the bot's wallet with cashu-ts `Wallet.send` and encodes them as a fresh token. Overpayments below 2 sat (the keyset fee floor) are reported as a tip instead of sent.
 - `src/provider.js` — maps NIP-90 params onto the query engine, validates filter values against known sites/sensors, prices the call.
@@ -42,6 +42,8 @@ Requests 5050, results 6050, feedback 7000. NIP-90 defines requests in 5000-5999
 ## Money path
 
 testnut.cashu.space is a public testnet mint (FakeWallet: invoices auto-confirm), so the full mint → token → verify → swap loop runs without real sats. The bot treats the mint as the only trusted third party: proofs are checked for spend state at the mint and swapped on accept, meaning a replayed token fails checkstate.
+
+**P2PK (NUT-11).** A plain token pasted into a public event is first-come-first-served. `CashuEscrow` accepts an optional `p2pkPrivKey` (default: the bot's Nostr key, so one identity covers both). Verify decodes each proof's NUT-10 secret; a locked proof must name the bot's pubkey (x-only compare, so 02/03-prefixed keys match too), otherwise the job errors with the foreign lock named and no swap is attempted. Redeem passes the privkey as `ReceiveConfig.privkey`, so cashu-ts attaches the Schnorr witness signatures the mint requires to move locked proofs. Locked and unlocked payments both settle; the result's `payment` block reports `p2pk_locked` and the lock pubkey. testnut advertises `nuts[11].supported = true`, so the loop is exercised live.
 
 Overpaid tokens are not eaten. The handler computes `total - price`, and when the change clears the 2 sat fee floor it splits that amount off the bot's own balance (`Wallet.send` with the bot's proof list and `includeFees: true` — omitting either makes cashu-ts v4 leave unsigned or under-funded proofs behind) and attaches the resulting token to the result payload as `payment.change_token`. The token total includes the 1 sat keyset fee, so the buyer nets exactly the overpayment. NUT-03 change outputs were the alternative; they need melt/swap plumbing the testnut FakeWallet does not exercise, so the token-in-result path wins. A failed split still ships the result and records the refund row as `failed`.
 

@@ -5,6 +5,7 @@
 //   2. HTTP sample endpoint: free preview of the dataset (default :8795).
 import http from "node:http";
 import { finalizeEvent, getPublicKey, generateSecretKey, nip19, SimplePool } from "nostr-tools";
+import { bytesToHex } from "@noble/hashes/utils.js";
 
 import { KIND_REQUEST, KIND_RESULT, KIND_FEEDBACK, parseRequestEvent, buildResultEvent, buildFeedbackEvent } from "./nip90.js";
 import * as query from "./query.js";
@@ -13,7 +14,7 @@ import { CashuEscrow, DEFAULT_MINT_URL } from "./cashu.js";
 import { Ledger } from "./ledger.js";
 import { calcChange, buildRefundToken, MIN_CHANGE_SATS } from "./refund.js";
 
-const RELAYS = (process.env.MESH_RELAYS || "wss://nos.lol,wss://relay.primal.net,wss://offchain.pub")
+const RELAYS = (process.env.MESH_RELAYS || "wss://nos.lol,wss://relay.primal.net,wss://offchain.pub,wss://nostr.wine,wss://relay.snort.social")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -80,8 +81,8 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
       return feedback("payment_required", {
         amountMsat: PRICE_MSAT,
         message: quote
-          ? `send a cashu token of at least ${PRICE_SATS} sat minted at ${escrow.mintUrl} (quote ${quote}, put it in content {"cashu":"cashu..."} or a cashu tag)`
-          : `send a cashu token of at least ${PRICE_SATS} sat minted at ${escrow.mintUrl} (content {"cashu":"cashu..."} or a cashu tag)`,
+          ? `send a cashu token of at least ${PRICE_SATS} sat minted at ${escrow.mintUrl} (quote ${quote}, put it in content {"cashu":"cashu..."} or a cashu tag; lock it P2PK to ${escrow.p2pkPubKey} so only this DVM can redeem)`
+          : `send a cashu token of at least ${PRICE_SATS} sat minted at ${escrow.mintUrl} (content {"cashu":"cashu..."} or a cashu tag; P2PK lock to ${escrow.p2pkPubKey} supported)`,
       });
     }
 
@@ -101,7 +102,7 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
     }
 
     const r = await escrow.redeemToken(req.token);
-    log(`[job] ${req.requestId.slice(0, 8)} redeem ${r.ok ? `ok ${r.amountSats} sat` : `failed: ${r.reason}`}`);
+    log(`[job] ${req.requestId.slice(0, 8)} redeem ${r.ok ? `ok ${r.amountSats} sat` : `failed: ${r.reason}`}${r.ok && v.locked ? " (p2pk-locked token)" : ""}`);
     if (!r.ok) {
       ledger?.updateJobStatus(req.requestId, "error_redeem_failed");
       return feedback("error", { message: `could not redeem token: ${r.reason}` });
@@ -133,6 +134,8 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
       overpayment_sats: overpaySats,
       change: refund.sent ? "see payment.change_token" : refund.note || null,
       change_token: refund.token || null,
+      p2pk_locked: v.locked,
+      p2pk_pubkey: escrow.p2pkPubKey,
       mint: escrow.mintUrl,
       state: "redeemed",
     };
@@ -229,11 +232,15 @@ export async function main({ privkey, relays, port, dbPath } = {}) {
     key = generateSecretKey();
     console.log(`[keys] no MESH_NSEC set, ephemeral dev key: ${nip19.npubEncode(getPublicKey(key))} (proofs will not persist)`);
   }
-  const escrow = await CashuEscrow.create();
+  // NUT-11 P2PK key defaults to the bot's Nostr key: same identity on Nostr and
+  // over ecash, no second secret to manage. Override with MESH_P2PK_PRIVKEY.
+  const p2pkPriv = process.env.MESH_P2PK_PRIVKEY || bytesToHex(key);
+  const escrow = await CashuEscrow.create(undefined, { p2pkPrivKey: p2pkPriv });
   const ledger = new Ledger(dbPath);
   const npub = nip19.npubEncode(getPublicKey(key));
   console.log(`[meshdvm] npub ${npub}`);
   console.log(`[meshdvm] mint ${DEFAULT_MINT_URL}, price ${PRICE_SATS} sat/call, result kind ${KIND_RESULT}, feedback kind ${KIND_FEEDBACK}`);
+  console.log(`[meshdvm] p2pk lock pubkey ${escrow.p2pkPubKey} (NUT-11: lock buyer payments to this hex)`);
   console.log(`[meshdvm] ledger ${dbPath || process.env.MESH_DB || "data/meshdvm.sqlite3"} ${JSON.stringify(ledger.stats())}`);
   const listener = startNostrListener({ escrow, ledger, privkey: key, ...(relays ? { relays } : {}) });
   const httpServer = startHttpSampleServer({ ...(port ? { port } : {}), ledger });

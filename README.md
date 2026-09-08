@@ -1,6 +1,6 @@
 # meshdvm
 
-A Nostr Data Vending Machine (NIP-90) that sells [SensorMesh](https://github.com/jayjex) IoT sensor data and takes Cashu ecash. No accounts on either side: the buyer is an npub, the payment is a token string pasted into a Nostr event.
+A Nostr Data Vending Machine (NIP-90) that sells [SensorMesh](https://github.com/jayjex/sensormesh) IoT sensor data and takes Cashu ecash. No accounts on either side: the buyer is an npub, the payment is a token string pasted into a Nostr event.
 
 Built for the Bitshala BOSS Battle hackathon, Freedom Stack track (Nostr + ecash).
 
@@ -38,6 +38,32 @@ One job end to end on public relays: the client (left) mints 5 sat, publishes ki
 
 ![A paid job end to end on public relays](docs/img/bot-relay.png)
 
+Or run the bundled client, which mints, publishes, waits, and prints the result:
+
+```sh
+node examples/client.js           # mint 5 sat testnet, buy one query, print the change token
+node examples/client.js --no-pay  # unpaid request, expect payment_required feedback
+node examples/client.js --p2pk <dvm-hex-pubkey>  # lock the payment NUT-11 P2PK to the DVM key
+```
+
+## P2PK: payments only the DVM can redeem
+
+Anyone who sees a plain Cashu token in a public Nostr event can redeem it first. With a NUT-11 P2PK lock the token's proofs carry a spending condition: they only move when signed by the lock key. Mint the payment locked to the DVM's pubkey and an interceptor who grabs the job event holds a string they can't spend.
+
+The bot derives the lock key from its own Nostr key, so the DVM identity is the same on Nostr and over ecash. It prints the hex at boot:
+
+```
+[meshdvm] p2pk lock pubkey 80307aaf... (NUT-11: lock buyer payments to this hex)
+```
+
+and repeats it in every `payment_required` feedback for clients that want to lock. Locked and unlocked payments both work; the result's `payment` block reports which one arrived:
+
+```json
+"payment": { "method": "cashu", "p2pk_locked": true, "p2pk_pubkey": "80307aaf...", ... }
+```
+
+A token locked to some other key is rejected with the lock key named, before any swap is attempted. testnut advertises NUT-11 support, so the full lock → sign-witness → swap loop runs live.
+
 ## Refunds and restart safety
 
 Pay 5 sat for a 2 sat query and the result carries this block:
@@ -52,8 +78,8 @@ The token in `payment.change_token` is a normal Cashu token: paste it into any C
 
 ```sh
 npm install
-npm test          # 29 tests (smoke + hardening + rehydration), no network
-npm start         # bot on nos.lol / relay.primal.net / offchain.pub + HTTP :8795
+npm test          # 38 tests (smoke + hardening + rehydration + p2pk), no network
+npm start         # bot on nos.lol / relay.primal.net / offchain.pub / nostr.wine / relay.snort.social + HTTP :8795
 ```
 
 Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
@@ -61,8 +87,9 @@ Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
 | Var | Default | What |
 | --- | --- | --- |
 | `MESH_NSEC` | ephemeral key | Nostr key of the DVM. Save it if you want the same npub across restarts. |
+| `MESH_P2PK_PRIVKEY` | derived from `MESH_NSEC` | Hex private key behind the P2PK lock. Default keeps one identity for Nostr and ecash. |
 | `MESH_MINT_URL` | `https://testnut.cashu.space` | Cashu mint to accept tokens from |
-| `MESH_RELAYS` | `wss://nos.lol,wss://relay.primal.net,wss://offchain.pub` | Comma-separated relay list |
+| `MESH_RELAYS` | `wss://nos.lol,wss://relay.primal.net,wss://offchain.pub,wss://nostr.wine,wss://relay.snort.social` | Comma-separated relay list |
 | `MESH_PRICE_SATS` | `2` | Price per query call in sats (mint swap fee is 1 sat, so 2 is the smallest redeemable payment) |
 | `MESH_HTTP_PORT` | `8795` | Port for the sample endpoint |
 | `MESH_DB` | `data/meshdvm.sqlite3` | SQLite ledger file (jobs, payments, refunds, seen event ids) |
@@ -73,7 +100,7 @@ Config via env (or a `.env` file, loaded with `--env-file-if-exists`):
 
 ## Status
 
-Working: request parsing, feedback, token verify + redeem, overpayment change refunds, wallet balance rehydration after restart, SQLite ledger (restart-safe, event dedup), filtered queries with sha256 pinning, free sample endpoint, 3-relay subscription.
+Working: request parsing, feedback, token verify + redeem, NUT-11 P2PK-locked payments (lock check on accept, witness signing on redeem), overpayment change refunds, wallet balance rehydration after restart, SQLite ledger (restart-safe, event dedup), filtered queries with sha256 pinning, free sample endpoint, 5-relay subscription.
 
 The DVM npub: `npub1sqc84t7fgh86557yv4djnhvg7037zlvnnxfluhydgmu89qa756gqg3m3w0` (key lives in a local `.env`, never committed).
 
@@ -85,7 +112,7 @@ MESH_DVM_PUBKEY=<bot hex pubkey> node examples/client.js
 
 Set `MESH_DVM_PUBKEY` in your env to the DVM hex pubkey so the client ignores result events from other DVMs on the same relays (several free DVMs answer any kind 5050 they see).
 
-Not yet (sprint 4+): P2PK-locked tokens, multi-mint.
+Not yet (sprint 5+): multi-mint.
 
 ## License
 
