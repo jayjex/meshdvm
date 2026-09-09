@@ -30,21 +30,16 @@ noscl event -k 5050 --tag param=site:metro-core --tag param=limit:5 --tag bid=50
 Or run the bundled client, which mints, publishes, waits, and prints the result:
 
 ```sh
-node examples/client.js           # mint 5 sat testnet, buy one query, print the change token
+node examples/client.js           # mint 2 sat testnet, buy one query, print the result
 node examples/client.js --no-pay  # unpaid request, expect payment_required feedback
+node examples/client.js --p2pk <dvm-hex-pubkey>  # lock the payment NUT-11 P2PK to the DVM key
+CLIENT_MINT_SATS=5 node examples/client.js  # mint 5 sat: 2 for the query, change refunded as a fresh token
 ```
 
 One job end to end on public relays: the client (left) mints 5 sat, publishes kind 5050, and receives the kind 6050 result; the bot (right) restores its wallet from the ledger at boot, redeems, and refunds the change.
 
 ![A paid job end to end on public relays](docs/img/bot-relay.png)
 
-Or run the bundled client, which mints, publishes, waits, and prints the result:
-
-```sh
-node examples/client.js           # mint 5 sat testnet, buy one query, print the change token
-node examples/client.js --no-pay  # unpaid request, expect payment_required feedback
-node examples/client.js --p2pk <dvm-hex-pubkey>  # lock the payment NUT-11 P2PK to the DVM key
-```
 
 ## P2PK: payments only the DVM can redeem
 
@@ -112,7 +107,7 @@ MESH_DVM_PUBKEY=<bot hex pubkey> node examples/client.js
 
 Set `MESH_DVM_PUBKEY` in your env to the DVM hex pubkey so the client ignores result events from other DVMs on the same relays (several free DVMs answer any kind 5050 they see).
 
-Not yet (sprint 5+): multi-mint.
+Not yet: multi-mint, NIP-89 DVM announcements.
 
 ## License
 
