@@ -78,7 +78,7 @@ The token in `payment.change_token` is a normal Cashu token: paste it into any C
 
 ```sh
 npm install
-npm test          # 38 tests (smoke + hardening + rehydration + p2pk), no network
+npm test          # 64 tests (smoke + hardening + rehydration + p2pk + edge), no network
 npm start         # bot on nos.lol / relay.primal.net / offchain.pub / nostr.wine / relay.snort.social + HTTP :8795
 ```
 
