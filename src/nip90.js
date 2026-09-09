@@ -27,12 +27,24 @@ export function parseRequestEvent(ev) {
     .flatMap((t) => t.slice(1).filter(Boolean));
 
   if (typeof ev.content === "string" && ev.content.trim().startsWith("{")) {
+    let c;
     try {
-      const c = JSON.parse(ev.content);
-      for (const k of PARAM_KEYS) if (c[k] !== undefined && c[k] !== null && c[k] !== "") params[k] = c[k];
+      c = JSON.parse(ev.content);
     } catch {
-      // content that is not JSON is ignored; param tags still apply
+      // content that LOOKS like JSON but does not parse is reported back, not
+      // silently ignored — a buyer with a typo must get an error, not silence
+      return {
+        ok: true,
+        requestId: ev.id,
+        requester: ev.pubkey,
+        params,
+        budgetMsat: Number.isFinite(budgetMsat) ? budgetMsat : null,
+        resultRelays,
+        token: extractCashuToken(ev),
+        contentJsonError: "content looks like JSON but failed to parse",
+      };
     }
+    for (const k of PARAM_KEYS) if (c[k] !== undefined && c[k] !== null && c[k] !== "") params[k] = c[k];
   }
   for (const k of PARAM_KEYS) {
     const v = paramValue(ev.tags, k);

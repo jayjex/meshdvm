@@ -23,6 +23,19 @@ const HTTP_PORT = Number(process.env.MESH_HTTP_PORT || 8795);
 // ---------------------------------------------------------------- nostr side
 export function makeJobHandler({ escrow, ledger = null, privkey, log = console.log }) {
   const botPubkey = getPublicKey(privkey);
+  // One at a time. Every job mutates shared state (ledger rows, escrow balance,
+  // wallet send splits) and the handler awaits mint/mint-wallet I/O throughout,
+  // so two concurrent jobs could interleave: a redeem pushed into the balance
+  // between a refund's snapshot and its keep-side assignment drops that proof
+  // from the books, and payment rows can outrun the job rows they belong to.
+  // Serializing removes the race — sqlite + the escrow stay single-writer.
+  let tail = Promise.resolve();
+  const queued = (ev, publish) => {
+    const run = tail.then(() => handleJobEvent(ev, publish));
+    // keep the chain alive no matter how a job ends; surface errors to the log
+    tail = run.then(() => undefined, (e) => log(`[job] handler error: ${e?.message || e}`));
+    return run;
+  };
   // Rebuild the spendable balance from the ledger once, on the first fresh
   // job. The dedup mark above runs first and synchronously, so a relay replay
   // or a second relay copy can never reach the redeem path; rehydration only
@@ -40,7 +53,7 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
       log(`[wallet] balance restore failed: ${e.message}`);
     }
   };
-  return async function handleJobEvent(ev, publish) {
+  async function handleJobEvent(ev, publish) {
     const t0 = Date.now();
     // Dedup on the raw event id, marked before any processing: relays replay
     // events and a restart re-delivers recent ones, so the second copy of a
@@ -61,13 +74,21 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
     const feedback = (status, extra) =>
       publish(finalizeEvent(buildFeedbackEvent(req, status, { mintUrl: escrow.mintUrl, ...extra }), privkey));
 
+    if (req.contentJsonError) {
+      log(`[job] ${req.requestId.slice(0, 8)} malformed content: ${req.contentJsonError}`);
+      ledger?.updateJobStatus(req.requestId, "error_params");
+      return feedback("error", { message: `malformed event content: ${req.contentJsonError} (raw content ignored, param tags still apply)` });
+    }
     const problems = validateParams(query, req.params);
     if (problems.length) {
       log(`[job] ${req.requestId.slice(0, 8)} bad params: ${JSON.stringify(problems)}`);
       ledger?.updateJobStatus(req.requestId, "error_params");
       return feedback("error", { message: `invalid params: ${JSON.stringify(problems)}` });
     }
-    if (req.budgetMsat !== null && req.budgetMsat < PRICE_MSAT) {
+    if (req.budgetMsat !== null && req.budgetMsat < PRICE_MSAT && req.token === null) {
+      // The bid only gates when it is the buyer's only payment signal: 0,
+      // negative, or below-price bids get payment_required. A token of at
+      // least the price always pays, whatever the bid claimed.
       ledger?.updateJobStatus(req.requestId, "payment_required_low_budget");
       return feedback("payment_required", {
         amountMsat: PRICE_MSAT,
@@ -145,7 +166,8 @@ export function makeJobHandler({ escrow, ledger = null, privkey, log = console.l
     ledger?.updateJobStatus(req.requestId, "paid", result.id);
     log(`[job] ${req.requestId.slice(0, 8)} result ${result.id.slice(0, 8)} published in ${Date.now() - t0}ms`);
     return result;
-  };
+  }
+  return queued;
 }
 
 export function startNostrListener({ escrow, ledger = null, privkey, relays = RELAYS, log = console.log }) {
@@ -165,7 +187,7 @@ export function startNostrListener({ escrow, ledger = null, privkey, relays = RE
     relays,
     { kinds: [KIND_REQUEST], since: Math.floor(Date.now() / 1000) - 60 },
     {
-      onevent: (ev) => handleJobEvent(ev, publish).catch((e) => log(`[job] handler error: ${e.message}`)),
+      onevent: (ev) => handleJobEvent(ev, publish).catch((e) => log(`[job] handler error: ${e?.stack || e.message || e}`)),
       onclose: (reasons) => {
         log(`[relay] subscription closed: ${JSON.stringify(reasons)}`);
         // idle close without reconnect would leave the bot deaf; re-subscribe

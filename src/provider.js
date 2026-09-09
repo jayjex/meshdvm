@@ -5,6 +5,11 @@
 export const PRICE_SATS = Number(process.env.MESH_PRICE_SATS || 2);
 export const PRICE_MSAT = PRICE_SATS * 1000;
 
+// Upper bound for any single param value. Relays reject oversized events and a
+// runaway filter would echo straight into the error feedback, so anything
+// longer is rejected with a bounded message instead of forwarded.
+export const MAX_PARAM_LEN = 512;
+
 /** Run the SensorMesh query with NIP-90 params and shape the result payload.
  *  Mirrors the MCP tool contract from sensormesh/mcp (same filters, same fields). */
 export async function buildDataPayload(query, params = {}) {
@@ -41,12 +46,20 @@ export async function buildDataPayload(query, params = {}) {
 }
 
 /** Validate filter values against the dataset. Unknown values reject the job
- *  with a machine-readable hint instead of an empty result. */
+ *  with a machine-readable hint instead of an empty result. Oversized values
+ *  are rejected with the length named — never echoed back in full. */
 export function validateParams(query, params = {}) {
   const problems = [];
-  if (params.site && !query.SITES.includes(params.site))
+  const tooLong = new Set();
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v === "string" && v.length > MAX_PARAM_LEN) {
+      tooLong.add(k);
+      problems.push({ param: k, error: `value too long: ${v.length} chars, max ${MAX_PARAM_LEN}` });
+    }
+  }
+  if (params.site && !tooLong.has("site") && !query.SITES.includes(params.site))
     problems.push({ param: "site", value: params.site, allowed: query.SITES });
-  if (params.sensor && !query.SENSOR_TYPES.includes(params.sensor))
+  if (params.sensor && !tooLong.has("sensor") && !query.SENSOR_TYPES.includes(params.sensor))
     problems.push({ param: "sensor", value: params.sensor, allowed: query.SENSOR_TYPES });
   return problems;
 }
